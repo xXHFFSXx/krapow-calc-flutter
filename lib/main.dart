@@ -1,55 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import 'models.dart';
 
 void main() {
   runApp(const KrapowCalcApp());
-}
-
-// --- Data Models ---
-
-class Ingredient {
-  String id;
-  String name;
-  double price;
-  String unit;
-
-  Ingredient({
-    required this.id,
-    required this.name,
-    required this.price,
-    required this.unit,
-  });
-}
-
-class Packaging {
-  String id;
-  String name;
-  double price;
-
-  Packaging({required this.id, required this.name, required this.price});
-}
-
-class FixedCost {
-  String id;
-  String name;
-  double amount;
-
-  FixedCost({required this.id, required this.name, required this.amount});
-}
-
-class MenuItemData {
-  String ingId;
-  double quantity;
-
-  MenuItemData({required this.ingId, required this.quantity});
-}
-
-class Menu {
-  String id;
-  String name;
-  List<MenuItemData> items;
-
-  Menu({required this.id, required this.name, required this.items});
 }
 
 // --- Main App ---
