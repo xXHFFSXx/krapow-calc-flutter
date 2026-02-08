@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'models.dart';
+import 'data/persistence/local_storage_repository.dart';
+import 'features/home/home_calculator.dart';
 
 void main() {
   runApp(const KrapowCalcApp());
@@ -35,6 +39,16 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   String activeTab = 'calculator';
+  final TextEditingController _estimatedBoxesController =
+      TextEditingController();
+  final Map<String, TextEditingController> _recipeQtyControllers = {};
+  final LocalStorageRepository _storage = LocalStorageRepository();
+  bool _storageReady = false;
+  bool _storageLoading = false;
+  bool _persisting = false;
+  bool _persistPending = false;
+  Timer? _persistDebounce;
+  final Duration _persistDebounceDuration = const Duration(milliseconds: 300);
 
   // --- Global State Initialization (Similar to Default Data) ---
   List<Ingredient> ingredients = [
@@ -95,6 +109,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _estimatedBoxesController.text = estimatedBoxes.toString();
     baseRecipe = [
       MenuItemData(ingId: 'ing_8', quantity: 200), // Rice
       MenuItemData(ingId: 'ing_9', quantity: 10), // Basil
@@ -153,78 +168,154 @@ class _HomeScreenState extends State<HomeScreen> {
     if (menus.isNotEmpty) {
       selectedMenuId = menus.first.id;
     }
+    _loadPersistedData();
+  }
+
+  @override
+  void dispose() {
+    _estimatedBoxesController.dispose();
+    _persistDebounce?.cancel();
+    for (final controller in _recipeQtyControllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
   }
 
   // --- Logic Calculations ---
 
+  Future<void> _loadPersistedData() async {
+    if (_storageLoading) {
+      return;
+    }
+    _storageLoading = true;
+    try {
+      await _storage.init();
+    } catch (error, stack) {
+      debugPrint('Storage init failed: $error');
+      debugPrint('$stack');
+      _storageLoading = false;
+      return;
+    }
+    final loadedIngredients = _storage.loadIngredients();
+    final loadedMenus = _storage.loadMenus();
+    final loadedPackaging = _storage.loadPackaging();
+    final loadedFixedCosts = _storage.loadFixedCosts();
+    final hasIngredients =
+        _storage.hasIngredientsData() || loadedIngredients.isNotEmpty;
+    final hasMenus = _storage.hasMenusData() || loadedMenus.isNotEmpty;
+    final hasPackaging =
+        _storage.hasPackagingData() || loadedPackaging.isNotEmpty;
+    final hasFixedCosts =
+        _storage.hasFixedCostsData() || loadedFixedCosts.isNotEmpty;
+    if (!mounted) {
+      _storageLoading = false;
+      return;
+    }
+    setState(() {
+      // Apply persisted empty lists only if the user has saved data before.
+      // This preserves defaults for first-run while honoring "cleared" state.
+      if (hasIngredients) {
+        ingredients = loadedIngredients;
+      }
+      if (hasMenus) {
+        menus = loadedMenus;
+        selectedMenuId = menus.isNotEmpty ? menus.first.id : null;
+      }
+      if (hasPackaging) {
+        packaging = loadedPackaging;
+      }
+      if (hasFixedCosts) {
+        fixedCosts = loadedFixedCosts;
+      }
+      _storageReady = true;
+    });
+    _storageLoading = false;
+  }
+
+  Future<void> _persistAll() async {
+    if (!_storageReady) {
+      return;
+    }
+    if (_persisting) {
+      _persistPending = true;
+      return;
+    }
+    _persisting = true;
+    try {
+      await Future.wait([
+        _storage.saveIngredients(ingredients),
+        _storage.saveMenus(menus),
+        _storage.savePackaging(packaging),
+        _storage.saveFixedCosts(fixedCosts),
+      ]);
+    } catch (_) {}
+    _persisting = false;
+    if (_persistPending) {
+      _persistPending = false;
+      await _persistAll();
+    }
+  }
+
+  void _schedulePersist() {
+    _persistDebounce?.cancel();
+    _persistDebounce = Timer(_persistDebounceDuration, _persistAll);
+  }
+
+  double _parseDoubleOrZero(String value, String fieldName) {
+    final parsed = double.tryParse(value);
+    if (parsed == null) {
+      debugPrint('Invalid number input for $fieldName: "$value"');
+      return 0;
+    }
+    return parsed;
+  }
+
   double get calculateHiddenCostPerBox {
-    double totalFixed = fixedCosts.fold(0, (sum, item) => sum + item.amount);
-    return estimatedBoxes > 0 ? totalFixed / estimatedBoxes : 0;
-  }
-
-  double get calculateTotalPackaging {
-    return packaging.fold(0, (sum, item) => sum + item.price);
-  }
-
-  Ingredient getIngredientDetails(String ingId) {
-    return ingredients.firstWhere(
-      (i) => i.id == ingId,
-      orElse:
-          () =>
-              Ingredient(id: 'unknown', name: 'Unknown', price: 0, unit: '-'),
+    return HomeCalculator.calculateHiddenCostPerBox(
+      fixedCosts: fixedCosts,
+      estimatedBoxes: estimatedBoxes,
     );
   }
 
-  Map<String, dynamic>? get currentMenuData {
-    if (selectedMenuId == null) return null;
-    try {
-      final menu = menus.firstWhere((m) => m.id == selectedMenuId);
-      double foodCost = 0;
-      List<Map<String, dynamic>> detailedItems = [];
+  double get calculateTotalPackaging {
+    return HomeCalculator.calculateTotalPackaging(packaging: packaging);
+  }
 
-      for (var item in menu.items) {
-        final details = getIngredientDetails(item.ingId);
-        final cost = details.price * item.quantity;
-        foodCost += cost;
-        detailedItems.add({
-          ...item.toJson(), // Helper needed or manual map
-          'name': details.name,
-          'price': details.price,
-          'unit': details.unit,
-          'cost': cost,
-          'rawItem': item, // Reference for editing
-        });
-      }
-
-      final pkgCost = calculateTotalPackaging;
-      final hiddenCost = calculateHiddenCostPerBox;
-      final totalCost = foodCost + pkgCost + hiddenCost;
-
-      final sellingPrice = totalCost * (1 + (targetMargin / 100));
-      const gpRate = 0.33;
-      final deliveryPrice = sellingPrice / (1 - gpRate);
-
-      return {
-        'menu': menu,
-        'detailedItems': detailedItems,
-        'foodCost': foodCost,
-        'pkgCost': pkgCost,
-        'hiddenCost': hiddenCost,
-        'totalCost': totalCost,
-        'sellingPrice': sellingPrice,
-        'deliveryPrice': deliveryPrice,
-      };
-    } catch (e) {
-      return null;
-    }
+  MenuPricingData? get currentMenuData {
+    return HomeCalculator.buildMenuData(
+      selectedMenuId: selectedMenuId,
+      menus: menus,
+      ingredients: ingredients,
+      packaging: packaging,
+      fixedCosts: fixedCosts,
+      estimatedBoxes: estimatedBoxes,
+      targetMargin: targetMargin,
+    );
   }
 
   // --- Actions ---
 
   void updateRecipeQuantity(MenuItemData item, String newQty) {
     setState(() {
-      item.quantity = double.tryParse(newQty) ?? 0;
+      item.quantity = _parseDoubleOrZero(newQty, 'recipe_quantity');
     });
+    _schedulePersist();
+  }
+
+  TextEditingController _getRecipeQtyController(MenuItemDetail item) {
+    final key = '${selectedMenuId ?? 'menu'}_${item.ingId}';
+    final controller = _recipeQtyControllers.putIfAbsent(
+      key,
+      () => TextEditingController(text: item.quantity.toString()),
+    );
+    final currentValue = item.quantity.toString();
+    if (controller.text != currentValue) {
+      controller.text = currentValue;
+      controller.selection = TextSelection.fromPosition(
+        TextPosition(offset: currentValue.length),
+      );
+    }
+    return controller;
   }
 
   void removeIngredientFromRecipe(int index) {
@@ -232,6 +323,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final menu = menus.firstWhere((m) => m.id == selectedMenuId);
       menu.items.removeAt(index);
     });
+    _schedulePersist();
   }
 
   void addIngredientToRecipe(String ingId) {
@@ -242,6 +334,7 @@ class _HomeScreenState extends State<HomeScreen> {
         menu.items.add(MenuItemData(ingId: ingId, quantity: 1));
       }
     });
+    _schedulePersist();
   }
 
   void addIngredientMaster() {
@@ -251,7 +344,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Ingredient(
             id: 'ing_${DateTime.now().millisecondsSinceEpoch}',
             name: newIngName,
-            price: double.tryParse(newIngPrice) ?? 0,
+            price: _parseDoubleOrZero(newIngPrice, 'ingredient_price'),
             unit: newIngUnit,
           ),
         );
@@ -260,6 +353,7 @@ class _HomeScreenState extends State<HomeScreen> {
         newIngUnit = 'g';
         showIngForm = false;
       });
+      _schedulePersist();
     }
   }
 
@@ -270,13 +364,14 @@ class _HomeScreenState extends State<HomeScreen> {
           Packaging(
             id: 'pkg_${DateTime.now().millisecondsSinceEpoch}',
             name: newPkgName,
-            price: double.tryParse(newPkgPrice) ?? 0,
+            price: _parseDoubleOrZero(newPkgPrice, 'packaging_price'),
           ),
         );
         newPkgName = '';
         newPkgPrice = '';
         showPkgForm = false;
       });
+      _schedulePersist();
     }
   }
 
@@ -287,13 +382,14 @@ class _HomeScreenState extends State<HomeScreen> {
           FixedCost(
             id: 'cost_${DateTime.now().millisecondsSinceEpoch}',
             name: newCostName,
-            amount: double.tryParse(newCostAmount) ?? 0,
+            amount: _parseDoubleOrZero(newCostAmount, 'fixed_cost_amount'),
           ),
         );
         newCostName = '';
         newCostAmount = '';
         showCostForm = false;
       });
+      _schedulePersist();
     }
   }
 
@@ -312,16 +408,26 @@ class _HomeScreenState extends State<HomeScreen> {
         newMenuName = '';
         showMenuForm = false;
       });
+      _schedulePersist();
     }
   }
 
   void deleteMenu(String id) {
     setState(() {
       menus.removeWhere((m) => m.id == id);
+      _recipeQtyControllers
+          .keys
+          .where((key) => key.startsWith('${id}_'))
+          .toList()
+          .forEach((key) {
+            _recipeQtyControllers[key]?.dispose();
+            _recipeQtyControllers.remove(key);
+          });
       if (selectedMenuId == id) {
         selectedMenuId = menus.isNotEmpty ? menus.first.id : null;
       }
     });
+    _schedulePersist();
   }
 
   // --- UI Components ---
@@ -438,13 +544,13 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    final double totalCost = data['totalCost'];
-    final double sellingPrice = data['sellingPrice'];
-    final double deliveryPrice = data['deliveryPrice'];
-    final double foodCost = data['foodCost'];
-    final double pkgCost = data['pkgCost'];
-    final double hiddenCost = data['hiddenCost'];
-    final List<dynamic> detailedItems = data['detailedItems'];
+    final double totalCost = data.totalCost;
+    final double sellingPrice = data.sellingPrice;
+    final double deliveryPrice = data.deliveryPrice;
+    final double foodCost = data.foodCost;
+    final double pkgCost = data.pkgCost;
+    final double hiddenCost = data.hiddenCost;
+    final List<MenuItemDetail> detailedItems = data.detailedItems;
 
     return Column(
       children: [
@@ -817,14 +923,14 @@ class _HomeScreenState extends State<HomeScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                item['name'],
+                        item.name,
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w500,
                                   color: Colors.black87,
                                 ),
                               ),
                               Text(
-                                'ต้นทุน: ${item['price']}/${item['unit']}',
+                                'ต้นทุน: ${item.price}/${item.unit}',
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: Colors.grey,
@@ -838,13 +944,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             width: 60,
                             height: 30,
                             child: TextField(
-                              controller: TextEditingController(
-                                text: item['quantity'].toString(),
-                              )..selection = TextSelection.fromPosition(
-                                TextPosition(
-                                  offset: item['quantity'].toString().length,
-                                ),
-                              ),
+                              controller: _getRecipeQtyController(item),
                               keyboardType: TextInputType.number,
                               textAlign: TextAlign.center,
                               decoration: InputDecoration(
@@ -855,7 +955,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               onChanged:
                                   (val) => updateRecipeQuantity(
-                                    item['rawItem'],
+                                    item.rawItem,
                                     val,
                                   ),
                             ),
@@ -863,7 +963,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 4),
                             child: Text(
-                              item['unit'],
+                              item.unit,
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey,
@@ -897,13 +997,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ),
                                   children: [
                                     TextSpan(
-                                      text: '${item['quantity']}',
+                                      text: '${item.quantity}',
                                       style: const TextStyle(
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
                                     TextSpan(
-                                      text: ' ${item['unit']}',
+                                      text: ' ${item.unit}',
                                       style: const TextStyle(
                                         fontSize: 12,
                                         color: Colors.grey,
@@ -913,7 +1013,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                               ),
                               Text(
-                                '${(item['cost'] as double).toStringAsFixed(2)} ฿',
+                                '${item.cost.toStringAsFixed(2)} ฿',
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: Colors.deepOrange,
@@ -953,7 +1053,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ingredients
                                 .where(
                                   (ing) => !detailedItems.any(
-                                    (item) => item['ingId'] == ing.id,
+                                    (item) => item.ingId == ing.id,
                                   ),
                                 )
                                 .map(
@@ -1158,8 +1258,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           decoration: _miniInputDecoration(),
                           onChanged: (val) {
                             setState(() {
-                              cost.amount = double.tryParse(val) ?? 0;
+                              cost.amount = _parseDoubleOrZero(val, 'fixed_cost_amount');
                             });
+                            _schedulePersist();
                           },
                         ),
                       ),
@@ -1169,6 +1270,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           setState(() {
                             fixedCosts.removeAt(idx);
                           });
+                          _persistAll();
                         },
                         child: const Icon(
                           Icons.delete_outline,
@@ -1193,11 +1295,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 4),
               TextField(
-                controller: TextEditingController(
-                  text: estimatedBoxes.toString(),
-                )..selection = TextSelection.fromPosition(
-                  TextPosition(offset: estimatedBoxes.toString().length),
-                ),
+                controller: _estimatedBoxesController,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
                   fillColor: Colors.orange.shade50,
@@ -1215,10 +1313,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     borderSide: BorderSide(color: Colors.orange.shade200),
                   ),
                 ),
-                onChanged:
-                    (val) => setState(
-                      () => estimatedBoxes = double.tryParse(val) ?? 0,
-                    ),
+                onChanged: (val) {
+                  setState(() {
+                    estimatedBoxes = _parseDoubleOrZero(
+                      val,
+                      'estimated_boxes',
+                    );
+                  });
+                },
               ),
               const SizedBox(height: 8),
               Container(
@@ -1314,13 +1416,14 @@ class _HomeScreenState extends State<HomeScreen> {
                               textAlign: TextAlign.right,
                               style: const TextStyle(fontSize: 14),
                               decoration: _miniInputDecoration(),
-                              onChanged: (val) {
-                                setState(() {
-                                  pkg.price = double.tryParse(val) ?? 0;
-                                });
-                              },
+                                onChanged: (val) {
+                                  setState(() {
+                                    pkg.price = _parseDoubleOrZero(val, 'packaging_price');
+                                  });
+                                  _schedulePersist();
+                                },
+                              ),
                             ),
-                          ),
                           const SizedBox(width: 4),
                           const Text(
                             'บาท',
@@ -1328,13 +1431,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(width: 8),
                           InkWell(
-                            onTap: () {
-                              setState(() {
-                                packaging.removeAt(idx);
-                              });
-                            },
-                            child: const Icon(
-                              Icons.delete_outline,
+                              onTap: () {
+                                setState(() {
+                                  packaging.removeAt(idx);
+                                });
+                                _schedulePersist();
+                              },
+                              child: const Icon(
+                                Icons.delete_outline,
                               color: Colors.grey,
                               size: 18,
                             ),
@@ -1483,7 +1587,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 decoration: _miniInputDecoration(),
                                 onChanged: (val) {
                                   // Update without setState to avoid redraw loop while typing
-                                  ing.price = double.tryParse(val) ?? 0;
+                                  ing.price = _parseDoubleOrZero(val, 'ingredient_price');
+                                  _schedulePersist();
                                 },
                               ),
                             ),
@@ -1503,6 +1608,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 setState(() {
                                   ingredients.removeAt(idx);
                                 });
+                                _schedulePersist();
                               },
                               child: const Icon(
                                 Icons.delete_outline,
@@ -1717,9 +1823,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-}
-
-// Extension to simple json logic for map
-extension MenuItemDataJson on MenuItemData {
-  Map<String, dynamic> toJson() => {'ingId': ingId, 'quantity': quantity};
 }
