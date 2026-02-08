@@ -1606,7 +1606,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ],
               ),
-              if (action != null) action,
+              ?action,
             ],
           ),
           const Divider(height: 20),
