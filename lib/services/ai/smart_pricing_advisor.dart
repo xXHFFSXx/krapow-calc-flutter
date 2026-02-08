@@ -35,7 +35,9 @@ class SmartPricingAdvisor {
       totalCost: breakdown.totalCost,
       targetMarginPercent: targetMarginPercent,
     );
-    final marginChange = ((suggestedPrice - currentPrice) / currentPrice) * 100;
+    // Guard against zero or negative current price to avoid NaN/Infinity.
+    final marginChange =
+        currentPrice > 0 ? ((suggestedPrice - currentPrice) / currentPrice) * 100 : 0.0;
     final reason = suggestedPrice > currentPrice
         ? 'เพิ่มราคานิดหน่อยเพื่อให้กำไรตามเป้าหมาย'
         : 'ราคาปัจจุบันสูงกว่าที่จำเป็นสำหรับกำไรเป้าหมาย';
