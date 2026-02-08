@@ -106,6 +106,18 @@ class PromotionConfigEntity {
   final double gpRate;
 }
 
+class SyncCheckpointEntity {
+  SyncCheckpointEntity({
+    required this.providerKey,
+    required this.lastSyncedAt,
+    required this.status,
+  });
+
+  final String providerKey;
+  final DateTime lastSyncedAt;
+  final String status;
+}
+
 class IngredientEntityAdapter extends TypeAdapter<IngredientEntity> {
   @override
   final int typeId = 10;
@@ -342,5 +354,30 @@ class PromotionConfigEntityAdapter extends TypeAdapter<PromotionConfigEntity> {
       ..writeDouble(obj.bundlePrice)
       ..writeInt(obj.bundleQuantity)
       ..writeDouble(obj.gpRate);
+  }
+}
+
+class SyncCheckpointEntityAdapter extends TypeAdapter<SyncCheckpointEntity> {
+  @override
+  final int typeId = 19;
+
+  @override
+  SyncCheckpointEntity read(BinaryReader reader) {
+    final providerKey = reader.readString();
+    final lastSyncedAt = DateTime.parse(reader.readString());
+    final status = reader.readString();
+    return SyncCheckpointEntity(
+      providerKey: providerKey,
+      lastSyncedAt: lastSyncedAt,
+      status: status,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, SyncCheckpointEntity obj) {
+    writer
+      ..writeString(obj.providerKey)
+      ..writeString(obj.lastSyncedAt.toIso8601String())
+      ..writeString(obj.status);
   }
 }

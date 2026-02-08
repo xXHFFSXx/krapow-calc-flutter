@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'integration_interfaces.dart';
 import 'integration_models.dart';
 
@@ -17,7 +19,14 @@ class IntegrationOrchestrator {
   Future<List<SalesRecord>> collectSales(DateTime from, DateTime to) async {
     final results = <SalesRecord>[];
     for (final provider in posProviders) {
-      results.addAll(await provider.fetchSales(from, to));
+      try {
+        results.addAll(await provider.fetchSales(from, to));
+      } catch (error) {
+        developer.log(
+          'POS provider ${provider.providerName} failed: $error',
+          name: 'IntegrationOrchestrator',
+        );
+      }
     }
     return results;
   }
@@ -25,7 +34,14 @@ class IntegrationOrchestrator {
   Future<List<MenuSyncRecord>> collectMenus() async {
     final results = <MenuSyncRecord>[];
     for (final provider in posProviders) {
-      results.addAll(await provider.fetchMenus());
+      try {
+        results.addAll(await provider.fetchMenus());
+      } catch (error) {
+        developer.log(
+          'POS menus provider ${provider.providerName} failed: $error',
+          name: 'IntegrationOrchestrator',
+        );
+      }
     }
     return results;
   }
@@ -33,7 +49,14 @@ class IntegrationOrchestrator {
   Future<List<DeliveryOrderRecord>> collectDeliveryOrders(DateTime from, DateTime to) async {
     final results = <DeliveryOrderRecord>[];
     for (final provider in deliveryProviders) {
-      results.addAll(await provider.fetchOrders(from, to));
+      try {
+        results.addAll(await provider.fetchOrders(from, to));
+      } catch (error) {
+        developer.log(
+          'Delivery provider ${provider.platformName} failed: $error',
+          name: 'IntegrationOrchestrator',
+        );
+      }
     }
     return results;
   }
@@ -41,7 +64,14 @@ class IntegrationOrchestrator {
   Future<List<SupplierPriceRecord>> collectSupplierPrices() async {
     final results = <SupplierPriceRecord>[];
     for (final provider in supplierProviders) {
-      results.addAll(await provider.fetchIngredientPrices());
+      try {
+        results.addAll(await provider.fetchIngredientPrices());
+      } catch (error) {
+        developer.log(
+          'Supplier provider ${provider.supplierName} failed: $error',
+          name: 'IntegrationOrchestrator',
+        );
+      }
     }
     return results;
   }
@@ -49,7 +79,14 @@ class IntegrationOrchestrator {
   Future<List<BenchmarkMetric>> collectBenchmarks() async {
     final results = <BenchmarkMetric>[];
     for (final provider in marketProviders) {
-      results.addAll(await provider.fetchBenchmarks());
+      try {
+        results.addAll(await provider.fetchBenchmarks());
+      } catch (error) {
+        developer.log(
+          'Market provider ${provider.sourceName} failed: $error',
+          name: 'IntegrationOrchestrator',
+        );
+      }
     }
     return results;
   }
