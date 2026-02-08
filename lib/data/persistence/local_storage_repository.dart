@@ -16,6 +16,11 @@ class LocalStorageRepository {
   static const _salesLogsBox = 'sales_logs';
   static const _promotionsBox = 'promotion_configs';
   static const _syncCheckpointBox = 'sync_checkpoints';
+  static const _metaBox = 'storage_meta';
+  static const _metaHasIngredientsKey = 'has_ingredients';
+  static const _metaHasMenusKey = 'has_menus';
+  static const _metaHasPackagingKey = 'has_packaging';
+  static const _metaHasFixedCostsKey = 'has_fixed_costs';
 
   Future<void> init() async {
     if (_initialized) {
@@ -32,8 +37,29 @@ class LocalStorageRepository {
       Hive.openBox<SalesLogEntity>(_salesLogsBox),
       Hive.openBox<PromotionConfigEntity>(_promotionsBox),
       Hive.openBox<SyncCheckpointEntity>(_syncCheckpointBox),
+      Hive.openBox<bool>(_metaBox),
     ]);
     _initialized = true;
+  }
+
+  bool hasIngredientsData() {
+    final box = Hive.box<bool>(_metaBox);
+    return box.get(_metaHasIngredientsKey, defaultValue: false) ?? false;
+  }
+
+  bool hasMenusData() {
+    final box = Hive.box<bool>(_metaBox);
+    return box.get(_metaHasMenusKey, defaultValue: false) ?? false;
+  }
+
+  bool hasPackagingData() {
+    final box = Hive.box<bool>(_metaBox);
+    return box.get(_metaHasPackagingKey, defaultValue: false) ?? false;
+  }
+
+  bool hasFixedCostsData() {
+    final box = Hive.box<bool>(_metaBox);
+    return box.get(_metaHasFixedCostsKey, defaultValue: false) ?? false;
   }
 
   void _registerAdapters() {
@@ -84,6 +110,7 @@ class LocalStorageRepository {
         ),
     };
     await _replaceBoxContents(box, entries);
+    await _setMetaFlag(_metaHasIngredientsKey);
   }
 
   List<Ingredient> loadIngredients() {
@@ -111,6 +138,7 @@ class LocalStorageRepository {
         ),
     };
     await _replaceBoxContents(box, entries);
+    await _setMetaFlag(_metaHasMenusKey);
   }
 
   List<Menu> loadMenus() {
@@ -133,6 +161,7 @@ class LocalStorageRepository {
         cost.id: FixedCostEntity(id: cost.id, name: cost.name, amount: cost.amount),
     };
     await _replaceBoxContents(box, entries);
+    await _setMetaFlag(_metaHasFixedCostsKey);
   }
 
   List<FixedCost> loadFixedCosts() {
@@ -149,6 +178,7 @@ class LocalStorageRepository {
         item.id: PackagingEntity(id: item.id, name: item.name, price: item.price),
     };
     await _replaceBoxContents(box, entries);
+    await _setMetaFlag(_metaHasPackagingKey);
   }
 
   List<Packaging> loadPackaging() {
@@ -211,5 +241,10 @@ class LocalStorageRepository {
     if (keysToDelete.isNotEmpty) {
       await box.deleteAll(keysToDelete);
     }
+  }
+
+  Future<void> _setMetaFlag(String key) async {
+    final box = Hive.box<bool>(_metaBox);
+    await box.put(key, true);
   }
 }

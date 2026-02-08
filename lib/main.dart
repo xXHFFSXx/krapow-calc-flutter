@@ -200,22 +200,31 @@ class _HomeScreenState extends State<HomeScreen> {
     final loadedMenus = _storage.loadMenus();
     final loadedPackaging = _storage.loadPackaging();
     final loadedFixedCosts = _storage.loadFixedCosts();
+    final hasIngredients =
+        _storage.hasIngredientsData() || loadedIngredients.isNotEmpty;
+    final hasMenus = _storage.hasMenusData() || loadedMenus.isNotEmpty;
+    final hasPackaging =
+        _storage.hasPackagingData() || loadedPackaging.isNotEmpty;
+    final hasFixedCosts =
+        _storage.hasFixedCostsData() || loadedFixedCosts.isNotEmpty;
     if (!mounted) {
       _storageLoading = false;
       return;
     }
     setState(() {
-      if (loadedIngredients.isNotEmpty) {
+      // Apply persisted empty lists only if the user has saved data before.
+      // This preserves defaults for first-run while honoring "cleared" state.
+      if (hasIngredients) {
         ingredients = loadedIngredients;
       }
-      if (loadedMenus.isNotEmpty) {
+      if (hasMenus) {
         menus = loadedMenus;
-        selectedMenuId = menus.first.id;
+        selectedMenuId = menus.isNotEmpty ? menus.first.id : null;
       }
-      if (loadedPackaging.isNotEmpty) {
+      if (hasPackaging) {
         packaging = loadedPackaging;
       }
-      if (loadedFixedCosts.isNotEmpty) {
+      if (hasFixedCosts) {
         fixedCosts = loadedFixedCosts;
       }
       _storageReady = true;
